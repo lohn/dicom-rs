@@ -14,6 +14,17 @@ allowing users to work with DICOM objects
 and interact with DICOM applications,
 while aiming to be fast, safe, and intuitive to use.
 
+This fork allows overriding Implementation Class UID & Version Name.
+
+## Using this fork as a patch
+
+To use the modified `dicom-ul` in your project, add the following to your `Cargo.toml`:
+
+```toml
+[patch.crates-io]
+dicom-ul = { git = "https://github.com/lohn/dicom-rs.git", tag = "v0.10.0-custom" }
+```
+
 ## Components
 
 ### Library
