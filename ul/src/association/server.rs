@@ -223,6 +223,10 @@ pub struct ServerAssociationOptions<'a, A> {
     read_timeout: Option<Duration>,
     /// TCP write timeout
     write_timeout: Option<Duration>,
+    /// the implementation class UID announced in the association response
+    implementation_class_uid: Cow<'a, str>,
+    /// the implementation version name announced in the association response
+    implementation_version_name: Cow<'a, str>,
 }
 
 impl Default for ServerAssociationOptions<'_, AcceptAny> {
@@ -239,6 +243,8 @@ impl Default for ServerAssociationOptions<'_, AcceptAny> {
             promiscuous: false,
             read_timeout: None,
             write_timeout: None,
+            implementation_class_uid: IMPLEMENTATION_CLASS_UID.into(),
+            implementation_version_name: IMPLEMENTATION_VERSION_NAME.into(),
         }
     }
 }
@@ -291,6 +297,8 @@ where
             ae_access_control: _,
             read_timeout,
             write_timeout,
+            implementation_class_uid,
+            implementation_version_name,
         } = self;
 
         ServerAssociationOptions {
@@ -305,6 +313,8 @@ where
             promiscuous,
             read_timeout,
             write_timeout,
+            implementation_class_uid,
+            implementation_version_name,
         }
     }
 
@@ -327,6 +337,30 @@ where
     {
         self.abstract_syntax_uids
             .push(trim_uid(abstract_syntax_uid.into()));
+        self
+    }
+
+    /// Override the implementation class UID
+    /// announced in the association response.
+    ///
+    /// The default is [`IMPLEMENTATION_CLASS_UID`](crate::IMPLEMENTATION_CLASS_UID).
+    pub fn implementation_class_uid<T>(mut self, uid: T) -> Self
+    where
+        T: Into<Cow<'a, str>>,
+    {
+        self.implementation_class_uid = trim_uid(uid.into());
+        self
+    }
+
+    /// Override the implementation version name
+    /// announced in the association response.
+    ///
+    /// The default is [`IMPLEMENTATION_VERSION_NAME`](crate::IMPLEMENTATION_VERSION_NAME).
+    pub fn implementation_version_name<T>(mut self, name: T) -> Self
+    where
+        T: Into<Cow<'a, str>>,
+    {
+        self.implementation_version_name = name.into();
         self
     }
 
@@ -516,10 +550,10 @@ where
                     user_variables: vec![
                         UserVariableItem::MaxLength(self.max_pdu_length),
                         UserVariableItem::ImplementationClassUID(
-                            IMPLEMENTATION_CLASS_UID.to_string(),
+                            self.implementation_class_uid.to_string(),
                         ),
                         UserVariableItem::ImplementationVersionName(
-                            IMPLEMENTATION_VERSION_NAME.to_string(),
+                            self.implementation_version_name.to_string(),
                         ),
                     ],
                 });
@@ -1039,6 +1073,94 @@ mod tests {
             ]),
             Some("1.2.840.10008.1.2.1".to_string()),
         );
+    }
+
+    #[test]
+    fn test_server_implementation_uid_override() {
+        let options = ServerAssociationOptions::new()
+            .accept_any()
+            .with_abstract_syntax("1.2.840.10008.1.1")
+            .implementation_class_uid("1.2.3.4.5.6")
+            .implementation_version_name("MY-CUSTOM-VERSION");
+
+        let rq = Pdu::AssociationRQ(AssociationRQ {
+            protocol_version: 1,
+            calling_ae_title: "CALLING".to_string(),
+            called_ae_title: "ANY-SCP".to_string(),
+            application_context_name: "1.2.840.10008.3.1.1.1".to_string(),
+            presentation_contexts: vec![crate::pdu::PresentationContextProposed {
+                id: 1,
+                abstract_syntax: "1.2.840.10008.1.1".to_string(),
+                transfer_syntaxes: vec!["1.2.840.10008.1.2".to_string()],
+            }],
+            user_variables: vec![
+                UserVariableItem::MaxLength(16384),
+                UserVariableItem::ImplementationClassUID("2.25.999".to_string()),
+                UserVariableItem::ImplementationVersionName("PEER".to_string()),
+            ],
+        });
+
+        let (pdu, _, _) = options.process_a_association_rq(rq).unwrap();
+
+        let user_variables = match pdu {
+            Pdu::AssociationAC(ac) => ac.user_variables,
+            _ => panic!("expected AssociationAC"),
+        };
+
+        let impl_uid = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationClassUID(uid) => Some(uid.as_str()),
+            _ => None,
+        });
+        let impl_version = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationVersionName(name) => Some(name.as_str()),
+            _ => None,
+        });
+
+        assert_eq!(impl_uid, Some("1.2.3.4.5.6"));
+        assert_eq!(impl_version, Some("MY-CUSTOM-VERSION"));
+    }
+
+    #[test]
+    fn test_server_implementation_uid_default() {
+        let options = ServerAssociationOptions::new()
+            .accept_any()
+            .with_abstract_syntax("1.2.840.10008.1.1");
+
+        let rq = Pdu::AssociationRQ(AssociationRQ {
+            protocol_version: 1,
+            calling_ae_title: "CALLING".to_string(),
+            called_ae_title: "ANY-SCP".to_string(),
+            application_context_name: "1.2.840.10008.3.1.1.1".to_string(),
+            presentation_contexts: vec![crate::pdu::PresentationContextProposed {
+                id: 1,
+                abstract_syntax: "1.2.840.10008.1.1".to_string(),
+                transfer_syntaxes: vec!["1.2.840.10008.1.2".to_string()],
+            }],
+            user_variables: vec![
+                UserVariableItem::MaxLength(16384),
+                UserVariableItem::ImplementationClassUID("2.25.999".to_string()),
+                UserVariableItem::ImplementationVersionName("PEER".to_string()),
+            ],
+        });
+
+        let (pdu, _, _) = options.process_a_association_rq(rq).unwrap();
+
+        let user_variables = match pdu {
+            Pdu::AssociationAC(ac) => ac.user_variables,
+            _ => panic!("expected AssociationAC"),
+        };
+
+        let impl_uid = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationClassUID(uid) => Some(uid.as_str()),
+            _ => None,
+        });
+        let impl_version = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationVersionName(name) => Some(name.as_str()),
+            _ => None,
+        });
+
+        assert_eq!(impl_uid, Some(IMPLEMENTATION_CLASS_UID));
+        assert_eq!(impl_version, Some(IMPLEMENTATION_VERSION_NAME));
     }
 
     impl<'a, A> ServerAssociationOptions<'a, A>

@@ -138,6 +138,10 @@ pub struct ClientAssociationOptions<'a> {
     write_timeout: Option<Duration>,
     /// TCP connection timeout
     connection_timeout: Option<Duration>,
+    /// the implementation class UID announced in the association request
+    implementation_class_uid: Cow<'a, str>,
+    /// the implementation version name announced in the association request
+    implementation_version_name: Cow<'a, str>,
 }
 
 impl Default for ClientAssociationOptions<'_> {
@@ -162,6 +166,8 @@ impl Default for ClientAssociationOptions<'_> {
             read_timeout: None,
             write_timeout: None,
             connection_timeout: None,
+            implementation_class_uid: IMPLEMENTATION_CLASS_UID.into(),
+            implementation_version_name: IMPLEMENTATION_VERSION_NAME.into(),
         }
     }
 }
@@ -246,6 +252,30 @@ impl<'a> ClientAssociationOptions<'a> {
     /// surpass the negotiated maximum PDU length.
     pub fn strict(mut self, strict: bool) -> Self {
         self.strict = strict;
+        self
+    }
+
+    /// Override the implementation class UID
+    /// announced in the association request.
+    ///
+    /// The default is [`IMPLEMENTATION_CLASS_UID`](crate::IMPLEMENTATION_CLASS_UID).
+    pub fn implementation_class_uid<T>(mut self, uid: T) -> Self
+    where
+        T: Into<Cow<'a, str>>,
+    {
+        self.implementation_class_uid = trim_uid(uid.into());
+        self
+    }
+
+    /// Override the implementation version name
+    /// announced in the association request.
+    ///
+    /// The default is [`IMPLEMENTATION_VERSION_NAME`](crate::IMPLEMENTATION_VERSION_NAME).
+    pub fn implementation_version_name<T>(mut self, name: T) -> Self
+    where
+        T: Into<Cow<'a, str>>,
+    {
+        self.implementation_version_name = name.into();
         self
     }
 
@@ -485,8 +515,10 @@ impl<'a> ClientAssociationOptions<'a> {
 
         let mut user_variables = vec![
             UserVariableItem::MaxLength(*max_pdu_length),
-            UserVariableItem::ImplementationClassUID(IMPLEMENTATION_CLASS_UID.to_string()),
-            UserVariableItem::ImplementationVersionName(IMPLEMENTATION_VERSION_NAME.to_string()),
+            UserVariableItem::ImplementationClassUID(self.implementation_class_uid.to_string()),
+            UserVariableItem::ImplementationVersionName(
+                self.implementation_version_name.to_string(),
+            ),
         ];
 
         if let Some(user_identity) = Self::determine_user_identity(
@@ -1510,5 +1542,57 @@ mod tests {
                 user_variables,
             })
         }
+    }
+
+    #[test]
+    fn test_client_implementation_uid_override() {
+        let options = ClientAssociationOptions::new()
+            .with_abstract_syntax("1.2.840.10008.1.1")
+            .implementation_class_uid("1.2.3.4.5.6")
+            .implementation_version_name("MY-CUSTOM-VERSION");
+
+        let (_, pdu) = options.create_a_associate_req(None).unwrap();
+
+        let user_variables = match pdu {
+            Pdu::AssociationRQ(rq) => rq.user_variables,
+            _ => panic!("expected AssociationRQ"),
+        };
+
+        let impl_uid = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationClassUID(uid) => Some(uid.as_str()),
+            _ => None,
+        });
+        let impl_version = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationVersionName(name) => Some(name.as_str()),
+            _ => None,
+        });
+
+        assert_eq!(impl_uid, Some("1.2.3.4.5.6"));
+        assert_eq!(impl_version, Some("MY-CUSTOM-VERSION"));
+    }
+
+    #[test]
+    fn test_client_implementation_uid_default() {
+        let options =
+            ClientAssociationOptions::new().with_abstract_syntax("1.2.840.10008.1.1");
+
+        let (_, pdu) = options.create_a_associate_req(None).unwrap();
+
+        let user_variables = match pdu {
+            Pdu::AssociationRQ(rq) => rq.user_variables,
+            _ => panic!("expected AssociationRQ"),
+        };
+
+        let impl_uid = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationClassUID(uid) => Some(uid.as_str()),
+            _ => None,
+        });
+        let impl_version = user_variables.iter().find_map(|v| match v {
+            UserVariableItem::ImplementationVersionName(name) => Some(name.as_str()),
+            _ => None,
+        });
+
+        assert_eq!(impl_uid, Some(IMPLEMENTATION_CLASS_UID));
+        assert_eq!(impl_version, Some(IMPLEMENTATION_VERSION_NAME));
     }
 }
